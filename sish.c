@@ -56,36 +56,36 @@ int main() {
         // with this we then know how many forks we will do
         // or could decide to do the forks on the fly
 
-        for (int i = 0; i < numTokens; i++){
-            // error validation
+        // for (int i = 0; i < numTokens; i++){
+        //     // error validation
             
-            // read the cmd
-            // only need to create pipe if using pipe
-            // I guess I could create a pipe in every case and pipe the output to stdout
-            int pipe_fd[2];
-            int child_pid; 
+        //     // read the cmd
+        //     // only need to create pipe if using pipe
+        //     // I guess I could create a pipe in every case and pipe the output to stdout
+        //     int pipe_fd[2];
+        //     int child_pid; 
 
-            if(pipe(pipe_fd) == -1) {
-                perror("pipe");
-                exit(EXIT_FAILURE);
-            }
-            if ((child_pid = fork()) == -1) {
-                perror("fork");
-                exit(EXIT_FAILURE);
-            }
+        //     if(pipe(pipe_fd) == -1) {
+        //         perror("pipe");
+        //         exit(EXIT_FAILURE);
+        //     }
+        //     if ((child_pid = fork()) == -1) {
+        //         perror("fork");
+        //         exit(EXIT_FAILURE);
+        //     }
 
-            if (child_pid == 0) {
-                close(pipe_fd[0]) // close read end of pipe
+        //     if (child_pid == 0) {
+        //         close(pipe_fd[0]) // close read end of pipe
 
-                // args are just cmd [flags] [thing]
-                char* args = // get number of args in cmd
-                for (int i = 0; i < numArgs; i++){
-                    args[i] = // cmd.args[i]
-                }
+        //         // args are just cmd [flags] [thing]
+        //         char* args = // get number of args in cmd
+        //         for (int i = 0; i < numArgs; i++){
+        //             args[i] = // cmd.args[i]
+        //         }
 
-                // exec then send output to pipe
-            }
-        }
+        //         // exec then send output to pipe
+        //     }
+        // }
 
 
 
