@@ -3,24 +3,25 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <stdbool.h>
 
 
 // utilitie
 #define READ 0
 #define WRITE 1
+
+// stuff
+struct CMD {
+    char* command;
+    char* flag;
+}; typedef struct CMD CMD;
+
 void exit_err(char* msg, int code);
 void make_fork(int* cpid, char* msg, int errCode);
 void make_pipe(int** pipe_fd, char* msg, int errCode);
 void make_dup2(int fd1, int fd2, char* msg, int errCode);
 
-// stuff
-struct CMD {
-    char* command; 
-    char* flags;
-};
-typedef struct CMD CMD;
-
-CMD* build_cmds(tokens);
+CMD* build_cmds(char** tokens, int numTokens, int* numCmds);
 
 
 int main(int argc, char* argv[]) {
@@ -37,6 +38,7 @@ int main(int argc, char* argv[]) {
         printf("%s", prompt);
         fgets(input, MAX_INPUT_LENGTH, stdin);
         input[strlen(input) - 1] = '\0';
+        // scanf("%s", input);
 
         // Eval
         int numTokens = 0;
@@ -53,7 +55,7 @@ int main(int argc, char* argv[]) {
             // have to distinguish between tokens that will be different processes vs flags of process
         }
         // add EOF token to allow for token peaking without going out of bounds
-        tokens[numTokens] = EOF;
+        tokens[numTokens] = "\n";
 
         printf("numTokens: %d\n", numTokens);
         for (int i = 0; i < numTokens; i++){
@@ -61,7 +63,7 @@ int main(int argc, char* argv[]) {
         }
 
         int numCmds;
-        CMD* cmds = build_cmds(tokens, &numCmds);
+        CMD* cmds = build_cmds(tokens, numTokens, &numCmds); // TODO: Create build_cmds which will turn the list of tokens into a list of CMDs from the | symbol
 
         // token types
         // bin, flag, ident?
@@ -78,7 +80,7 @@ int main(int argc, char* argv[]) {
 
         // ### This is proof of concept for the piping ###
         // All of the command outputs will be written to a buffer
-        // for each command a child process is spawned that will 
+        // for each command a child process is spawned that will
         // 1. Create a pipe
         // 2. Write the contents of the buffer to the pipe
         // 3. Spawn a grandchild that
@@ -91,37 +93,45 @@ int main(int argc, char* argv[]) {
         const int BUFFERSIZE = 2048;
         char buffer[BUFFERSIZE];
 
+        printf("\n");
         for (int i = 0; i < numCmds; i++) {
-            pid_t cpid;
-            make_fork(&cpid, "failed to create fork on child", 1);
+            printf("%s %s\n", cmds[i].command, cmds[i].flag);
+            pid_t cpid1;
+            make_fork(&cpid1, "failed to fork for cpid1", 1);
+            if (cpid1 == 0) {
+                int* fd;
+                make_pipe(&fd ,"failed to create pipe", 1);
 
-            if (cpid == 0) {
-                int* pipe_fd;
-                make_pipe(&pipe_fd, "failed to create pipe", 1);
-
+                // write buffer contents to pipe
                 size_t contentSize = strlen(buffer) + 1;
-                if (write(pipe_fd[WRITE], buffer, contentSize) != contentSize) {
+                if (write(fd[WRITE], buffer, contentSize) != contentSize) {
                     perror("failed to write buffer content to pipe");
                     return 1;
                 }
-                pid_t gcpid;
-                make_fork(&gcpid, "failed to create fork on grandchild", 1);
-                if (gcpid == 0) {
-                    close(pipe_fd[READ]);
-                    make_dup2(pipe_fd[WRITE], STDIN_FILENO, "dup2 failed in class child process", 1);
-                    close(pipe_fd[WRITE]);
-                    char* myargs[] = {"cat", argv[1], NULL};
+
+                pid_t cpid2;
+                make_fork(&cpid2, "failed to fork for cpid2", 1);
+                if (cpid2 == 0) {
+                    close(fd[READ]);
+                    make_dup2(fd[WRITE], STDIN_FILENO, "dup2 failed in class child process", 1);
+                    close(fd[WRITE]);
+                    //TODO, construct commands based on current cmds[i]
+                    char* myargs[] = {cmds[i].command, cmds[i].flag, NULL};
+                    //TODO, implement the command and run using execvp
                     execvp(myargs[0], myargs);
                 }
-                close(pipe_fd[WRITE]);
-                waitpid(gcpid, NULL, 0);
+                close(fd[WRITE]);
+                waitpid(cpid2, NULL, 0);
 
                 // write the output of the pipe to the buffer
-                int nbytes = read(pipe_fd[READ], buffer, sizeof(buffer));
-                close(pipe_fd[READ]);
-                free(pipe_fd);
+                int nbytes = read(fd[READ], buffer, sizeof(buffer));
+                close(fd[READ]);
+                free(fd);
             }
         }
+        // print the contents of the buffer to stdout
+        printf("This should be the buffer content\n");
+        printf("%s\n", buffer);
     }
     printf("Thank you for using sish!\n");
 }
@@ -148,4 +158,33 @@ void make_dup2(int fd1, int fd2, char* msg, int code) {
     if ((dup2(fd1, fd2)) == -1) {
         exit_err(msg, code);
     }
+}
+
+CMD* build_cmds(char** tokens, int numTokens, int* numCmds){
+    CMD* cmds = (CMD*) malloc(sizeof(CMD)*numTokens);
+
+    bool canStartNextCmd = true;
+    *numCmds = 0;
+
+    for(int i = 0; i < numTokens; i++){
+        int endOfCommand = strcmp(tokens[i], "|") == 0;
+        if(endOfCommand){
+            //End the current command and start editing the next one
+            canStartNextCmd = true;
+            (*numCmds)++;
+            continue;
+        }
+        else if(canStartNextCmd){
+            //Start building a new command
+            cmds[*numCmds].command = tokens[i];
+            canStartNextCmd = false;
+            continue;
+        }else{
+            //Build the flags
+            cmds[*numCmds].flag = tokens[i];
+            continue;
+        }
+    }
+    (*numCmds)++;
+    return cmds;
 }
