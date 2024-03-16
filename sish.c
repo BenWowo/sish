@@ -95,6 +95,8 @@ int main(int argc, char* argv[]) {
 
         printf("\n");
         for (int i = 0; i < numCmds; i++) {
+            if(strcmp(cmds[i].command, "exit") == 0)
+                exit(EXIT_SUCCESS);
             printf("%s %s\n", cmds[i].command, cmds[i].flag);
             pid_t cpid1;
             make_fork(&cpid1, "failed to fork for cpid1", 1);
