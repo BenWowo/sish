@@ -155,6 +155,7 @@ printCmds(CMD** cmds) {
     }
 }
 
+// This part of the code is incomplete don't look at this...
 void
 execCmds(CMD **cmds) {
     int numChildren = 0;
@@ -197,7 +198,7 @@ execCmds(CMD **cmds) {
 
             if (i == 0 && i == numChildren - 1) { // one child case
                 // just execute the command
-                execvp(cmds[i], cmd[i]->args);
+                execvp(cmds[i], cmds[i]->args);
                 exit_err("failed to execvp");
             } else if (i == 0) {
                 close(fds[0][0]); // not reading from pipe to next process
