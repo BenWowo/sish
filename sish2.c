@@ -12,7 +12,24 @@
 #define PROMPT "sish> "
 #define true 1
 #define false 0
+#define READ 0
+#define WRITE 1
 typedef int8_t bool;
+
+struct HistoryListNode {
+    char* line;
+    struct HistoryListNode *next;
+};
+
+typedef struct HistoryListNode HistoryListNode;
+
+struct HistoryLinkedList{
+    HistoryListNode *head;
+    HistoryListNode *tail;
+    int capacity;    
+    int size;
+};
+typedef struct HistoryLinkedList HistoryLinkedList;
 
 struct CMD {
     char** args;
@@ -26,7 +43,13 @@ void printTokens(char **tokens);
 CMD  **getCmds(char **tokens);
 void freeCmds(CMD **cmds);
 void printCmds(CMD **cmds);
+void execCmd(CMD *cmd);
 void execCmds(CMD **cmds);
+void history_add(HistoryLinkedList *history, char *input);
+void history_clear(HistoryLinkedList *history);
+void history_get(HistoryLinkedList *history, int offset);
+void history_init(HistoryLinkedList *history);
+void freeHistory(HistoryLinkedList *history);
 
 // utility functions
 void exit_err(char *msg);
@@ -34,20 +57,25 @@ void make_fork(pid_t *cpid, char *msg);
 void make_pipe(int **pipe_fd, char *msg);
 void make_dup2(int fd1, int fd2, char *msg);
 
+HistoryLinkedList history = {0}; // this is bad practice...
+
 int 
 main(int argc, char* argv[]) {
+    history_init(&history);
+
     while(true) {
         const char* prompt = PROMPT;
         printf("%s", prompt);
 
         char* input = getInput();
         // printf("input: %s\n", input);
+        // history_add(&history, input);
 
         char** tokens = getTokens(input);
         // printTokens(tokens);
 
         CMD** cmds = getCmds(tokens);
-        // printCmds(cmds);
+        printCmds(cmds);
 
         // maybe I should do error validation here?
 
@@ -57,7 +85,10 @@ main(int argc, char* argv[]) {
         free(tokens);
         free(input);
     }
+    freeHistory(&history);    
+
     printf("Thank you for using sish!\n");
+    
     return EXIT_SUCCESS;
 }
 
@@ -155,32 +186,58 @@ printCmds(CMD** cmds) {
     }
 }
 
-// This part of the code is incomplete don't look at this...
+void
+execCmd(CMD* cmd) {
+    printf("EXEC cmd is being called right now");
+
+    if (strcmp(cmd->args[0], "exit") == 0) {
+        printf("This is the exit command being executed");
+    } else if (strcmp(cmd->args[0], "cd") == 0) {
+        printf("This is the firs thing in the thing");
+    } else if (strcmp(cmd->args[0], "history") == 0) {
+        // check for clear and check for offset
+        // bool shouldClear = false;
+        // int offset = 0
+
+        // history_get(&history, offset);
+
+        // history_clear(&history);
+    } else {
+        printf("This is the last case in the execCmd block\n");
+        execvp(cmd->args[0], cmd->args);
+        exit_err("failed to execvp");
+    }
+    return;
+    // to launch an executable
+    // just do execvp the name of whatever they typed
+    // and make sure to make null the last arg of execvp
+}
+
+// This doesn't work for some reason
 void
 execCmds(CMD **cmds) {
+    CMD* childrenCmds[BUFFERSIZE];
     int numChildren = 0;
     int numPipes = 0;
     for (int cmdIndex = 0; cmds[cmdIndex] != NULL; cmdIndex++) {
         if (cmds[cmdIndex]->isPipe == true) {
             numPipes++;
         } else {
+            childrenCmds[numChildren] = cmds[cmdIndex];
             numChildren++;
         }
     }
-    int **fds = malloc(sizeof(int*) * numPipes);
+    int **pipes = (int**)malloc(sizeof(int*) * numPipes);
     pid_t *cpids = (pid_t*)malloc(sizeof(pid_t) * numChildren);
 
-    for (int i = 0; i < numPipes; i++) {
-       make_pipe(&fds[i], "failed to make pipe"); 
+    for (int pipeIndex = 0; pipeIndex < numPipes; pipeIndex++) {
+       make_pipe(&pipes[pipeIndex], "failed to make pipe"); 
     }
 
-    // execute and pipe the commands together here
-    for (int i = 0; i < numChildren; i++) {
-        printf("how many things are inside of this loop???\n");
-
-        // wait I think my pointer arithmatic is off and it is not making the forks
-        make_fork(&cpids[i], "failed to make fork");
-        if (cpids[i] == 0) {
+    for (int childIndex = 0; childIndex < numChildren; childIndex++) {
+        CMD* childCmd = childrenCmds[childIndex];
+        make_fork(&cpids[childIndex], "failed to make fork");
+        if (cpids[childIndex] == 0) {
             // close all pipes that it is not using
             // close all pipes execpt fd[n-1] and fd[n]
 
@@ -188,66 +245,55 @@ execCmds(CMD **cmds) {
             // cpid 1 | reads from fd[0], writes to fd[1]
             // ...
             // cpid n | reads from fd[n-1], writes to stdout
-            for (int pipeIndex = 0; pipeIndex < numPipes; pipeIndex) {
-                for (int pipeEnd = 0; pipeEnd < 2; pipeEnd++) {
-                    if (pipeIndex != i-1 && pipeIndex != i) {
-                        close(fds[pipeIndex][pipeEnd]);
+            for (int pipeIndex = 0; pipeIndex < numPipes; pipeIndex++) {
+                if (pipeIndex != childIndex-1 && pipeIndex != childIndex) {
+                    for (int pipeEnd = 0; pipeEnd < 2; pipeEnd++) {
+                        close(pipes[pipeIndex][pipeEnd]);
                     }
                 }
             }
+            printf("Is it getting stuck anywhere???");
 
-            if (i == 0 && i == numChildren - 1) { // one child case
-                // just execute the command
-                execvp(cmds[i], cmds[i]->args);
-                exit_err("failed to execvp");
-            } else if (i == 0) {
-                close(fds[0][0]); // not reading from pipe to next process
+            if (childIndex == 0 && childIndex == numChildren - 1) { // one child case
+                printf("One child CASE!\n");
+                execCmd(childCmd);
+            } else if (childIndex == 0) {
+                printf("This is the first of many children\n");
+                close(pipes[0][READ]); // not reading from pipe to next process
 
-                make_dup2(fds[0][1], STDOUT_FILENO, "failed to make dup2");
-                close(fds[0][1]); // close write end bc dup2
+                make_dup2(pipes[0][WRITE], STDOUT_FILENO, "failed to make dup2");
+                close(pipes[0][WRITE]); // close write end bc dup2
 
-                // execvp(cmds[i]->args[0], cmds[i]);
-                // exit_err("execvp failed");
-            } else if (i == numChildren - 1) {
-                close(fds[i-1][1]); // not writing to pipe from prev process
-                close(fds[i][0]);   // not reading from pipe to next proccess
+                execCmd(childCmd);
+            } else if (childIndex == numChildren - 1) {
+                printf("This is the last of many children\n");
+                close(pipes[childIndex-1][WRITE]); // not writing to pipe from prev process
+                make_dup2(pipes[childIndex-1][READ], STDIN_FILENO, "failed to make dup2");
+                close(pipes[childIndex-1][READ]); // close read end bc dup2
 
-                make_dup2(fds[i][0], STDIN_FILENO, "failed to make dup2");
-                close(fds[i][0]);   // close write end of pipe bc dup2
-
-                // execvp(cmds[i]->args[0], cmds[i]);
-                // exit_err("execvp failed");
+                execCmd(childCmd);
             } else {
-                close(fds[i-1][1]); // not writing to pipe from prev process
-                close(fds[i][0]);   // not reading from pipe to next process
+                printf("This is one of many children\n");
+                close(pipes[childIndex-1][WRITE]); // not writing to pipe from prev process
+                close(pipes[childIndex][READ]);    // not reading from pipe to next process
 
-                make_dup2(fds[i-1], STDIN_FILENO, "failed to make dup2");
-                make_dup2(fds[i], STDOUT_FILENO, "failed to make dup2");
+                make_dup2(pipes[childIndex-1][READ], STDIN_FILENO, "failed to make dup2");
+                make_dup2(pipes[childIndex][WRITE], STDOUT_FILENO, "failed to make dup2");
 
-                close(fds[i-1][0]);
-                close(fds[i][1]);
+                close(pipes[childIndex-1][READ]); // close read end bc dup2
+                close(pipes[childIndex][WRITE]);  // close write end bc dup2
 
-                // execvp(cmds[i]->args[0], cmds[i]);
-                // exit_err("execvp failed");
+                execCmd(childCmd);
             }
-
-            // to launch an executable
-            // just do execvp the name of whatever they typed
-            // and make sure to make null the last arg of execvp
-
-            printf("This is the child\n");
             return;
         }
     }
-    
-
-    printf("How many processes get to this part");
 
 
     // close all of the pipes in main process because it doesn't use them
     for (int i = 0; i < numPipes; i++) {
         for (int pipeEnd = 0; pipeEnd < 2; pipeEnd++) {
-            close(fds[i][pipeEnd]);
+            close(pipes[i][pipeEnd]);
         }
     }
 
@@ -256,6 +302,53 @@ execCmds(CMD **cmds) {
         waitpid(cpids[i], NULL, 0);
     }
 
+    free(cpids);
+    for (int i = 0; i < numPipes; i++) {
+        free(pipes[i]);
+    }
+    free(pipes);
+
+    printf("How many processes get to this part\n");
+}
+
+void
+history_add(HistoryLinkedList *history, char *input) {
+    // edge case for empty history
+    // history of size 1
+    // history of 
+
+    HistoryListNode* newTail = (HistoryListNode*)malloc(sizeof(HistoryListNode));
+    newTail->line = input;
+    newTail->next = NULL;
+    history->tail->next = newTail;
+    history->tail = newTail;
+
+    if (history->size == history->capacity) {
+        
+    } 
+}
+
+void
+history_clear(HistoryLinkedList *history) {
+
+}
+
+void
+history_print(HistoryLinkedList *history, int offset) {
+    // print the history starting from the offset if it is in bounds
+
+}
+
+void
+history_init(HistoryLinkedList *history) {
+    history->head = NULL;
+    history->tail = NULL;
+    history->size = 0;
+    history->capacity = 100;
+}
+void
+freeHistory(HistoryLinkedList *history) {
+    // free all of the linked list nodes
 }
 
 void
