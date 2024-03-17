@@ -75,7 +75,7 @@ main(int argc, char* argv[]) {
         // printTokens(tokens);
 
         CMD** cmds = getCmds(tokens);
-        printCmds(cmds);
+        // printCmds(cmds);
 
         // maybe I should do error validation here?
 
@@ -188,13 +188,14 @@ printCmds(CMD** cmds) {
 
 void
 execCmd(CMD* cmd) {
-    printf("EXEC cmd is being called right now");
-
     if (strcmp(cmd->args[0], "exit") == 0) {
-        printf("This is the exit command being executed");
+        printf("This is the exit command being executed\n");
+        return;
     } else if (strcmp(cmd->args[0], "cd") == 0) {
-        printf("This is the firs thing in the thing");
+        printf("This is the cd command being executed\n");
+        return;
     } else if (strcmp(cmd->args[0], "history") == 0) {
+        printf("This is history being called\n");
         // check for clear and check for offset
         // bool shouldClear = false;
         // int offset = 0
@@ -202,18 +203,18 @@ execCmd(CMD* cmd) {
         // history_get(&history, offset);
 
         // history_clear(&history);
+        return;
     } else {
-        printf("This is the last case in the execCmd block\n");
         execvp(cmd->args[0], cmd->args);
         exit_err("failed to execvp");
+
+        // to launch an executable
+        // just do execvp the name of whatever they typed
+        // and make sure to make null the last arg of execvp
     }
     return;
-    // to launch an executable
-    // just do execvp the name of whatever they typed
-    // and make sure to make null the last arg of execvp
 }
 
-// This doesn't work for some reason
 void
 execCmds(CMD **cmds) {
     CMD* childrenCmds[BUFFERSIZE];
@@ -239,8 +240,6 @@ execCmds(CMD **cmds) {
         make_fork(&cpids[childIndex], "failed to make fork");
         if (cpids[childIndex] == 0) {
             // close all pipes that it is not using
-            // close all pipes execpt fd[n-1] and fd[n]
-
             // cpid 0 | reads from stdin, writes to fd[0]
             // cpid 1 | reads from fd[0], writes to fd[1]
             // ...
@@ -252,13 +251,12 @@ execCmds(CMD **cmds) {
                     }
                 }
             }
-            printf("Is it getting stuck anywhere???");
 
             if (childIndex == 0 && childIndex == numChildren - 1) { // one child case
-                printf("One child CASE!\n");
+                // printf("One child CASE!\n");
                 execCmd(childCmd);
             } else if (childIndex == 0) {
-                printf("This is the first of many children\n");
+                // printf("This is the first of many children\n");
                 close(pipes[0][READ]); // not reading from pipe to next process
 
                 make_dup2(pipes[0][WRITE], STDOUT_FILENO, "failed to make dup2");
@@ -266,14 +264,14 @@ execCmds(CMD **cmds) {
 
                 execCmd(childCmd);
             } else if (childIndex == numChildren - 1) {
-                printf("This is the last of many children\n");
+                // printf("This is the last of many children\n");
                 close(pipes[childIndex-1][WRITE]); // not writing to pipe from prev process
                 make_dup2(pipes[childIndex-1][READ], STDIN_FILENO, "failed to make dup2");
                 close(pipes[childIndex-1][READ]); // close read end bc dup2
 
                 execCmd(childCmd);
             } else {
-                printf("This is one of many children\n");
+                // printf("This is one of many children\n");
                 close(pipes[childIndex-1][WRITE]); // not writing to pipe from prev process
                 close(pipes[childIndex][READ]);    // not reading from pipe to next process
 
@@ -285,6 +283,7 @@ execCmds(CMD **cmds) {
 
                 execCmd(childCmd);
             }
+            printf("This part only happens if they use exit, cd, or history\n");
             return;
         }
     }
@@ -307,8 +306,6 @@ execCmds(CMD **cmds) {
         free(pipes[i]);
     }
     free(pipes);
-
-    printf("How many processes get to this part\n");
 }
 
 void
