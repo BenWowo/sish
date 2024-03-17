@@ -4,11 +4,13 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdint.h>
+#include <assert.h>
+#include <ctype.h>
 
-#define BUFFERSIZE 1028
-#define MAX_NUM_TOKENS 1028
-#define MAX_NUM_CMDS 1028
-#define MAX_NUM_FLAGS 1028
+#define BUFFERSIZE 4096
+#define MAX_NUM_TOKENS 4096
+#define MAX_NUM_CMDS 4096
+#define MAX_NUM_ARGS 4096
 #define PROMPT "sish> "
 #define true 1
 #define false 0
@@ -40,14 +42,16 @@ typedef struct CMD CMD;
 char *getInput();
 char **getTokens(char *input);
 void printTokens(char **tokens);
+
 CMD  **getCmds(char **tokens);
 void freeCmds(CMD **cmds);
 void printCmds(CMD **cmds);
 void execCmd(CMD *cmd);
 void execCmds(CMD **cmds);
+
 void history_add(HistoryLinkedList *history, char *input);
 void history_clear(HistoryLinkedList *history);
-void history_get(HistoryLinkedList *history, int offset);
+char *history_get(HistoryLinkedList *history, int offset);
 void history_init(HistoryLinkedList *history);
 void freeHistory(HistoryLinkedList *history);
 
@@ -56,6 +60,7 @@ void exit_err(char *msg);
 void make_fork(pid_t *cpid, char *msg);
 void make_pipe(int **pipe_fd, char *msg);
 void make_dup2(int fd1, int fd2, char *msg);
+bool isInteger(char* number);
 
 HistoryLinkedList history = {0}; // this is bad practice...
 
@@ -69,7 +74,8 @@ main(int argc, char* argv[]) {
 
         char* input = getInput();
         // printf("input: %s\n", input);
-        // history_add(&history, input);
+
+        history_add(&history, input);
 
         char** tokens = getTokens(input);
         // printTokens(tokens);
@@ -77,8 +83,7 @@ main(int argc, char* argv[]) {
         CMD** cmds = getCmds(tokens);
         // printCmds(cmds);
 
-        // maybe I should do error validation here?
-
+        // I guess I can do error validation inside of execCmds
         execCmds(cmds);
 
         freeCmds(cmds);
@@ -130,10 +135,6 @@ printTokens(char **tokens) {
     }
 }
 
-
-
-// I'm thinking of writing a BNF grammer for commands
-// I have to use CMD** instead of just CMD* because the cmds are dynamically allocated
 CMD **
 getCmds(char **tokens) {
     CMD** cmds = (CMD**)malloc(sizeof(CMD*) * MAX_NUM_CMDS);
@@ -141,7 +142,7 @@ getCmds(char **tokens) {
     int cmdIndex = 0;
     while (tokens[tokenIndex] != NULL) {
         CMD* cmd = (CMD*)malloc(sizeof(CMD));
-        cmd->args = (char**)malloc(sizeof(char*) * MAX_NUM_FLAGS);
+        cmd->args = (char**)malloc(sizeof(char*) * MAX_NUM_ARGS);
         int argIndex = 0;
 
         if (strcmp(tokens[tokenIndex], "|") == 0) {
@@ -150,7 +151,6 @@ getCmds(char **tokens) {
             argIndex++;
             tokenIndex++;
         } else {
-            // keep looking ahead until pipe or the end of tokens
             cmd->isPipe = false;
             while (tokens[tokenIndex] != NULL && strcmp(tokens[tokenIndex], "|") != 0) {
                 cmd->args[argIndex] = tokens[tokenIndex];
@@ -190,33 +190,51 @@ void
 execCmd(CMD* cmd) {
     if (strcmp(cmd->args[0], "exit") == 0) {
         printf("This is the exit command being executed\n");
-        return;
+        exit(0);
     } else if (strcmp(cmd->args[0], "cd") == 0) {
         printf("This is the cd command being executed\n");
-        return;
+        exit(0);
     } else if (strcmp(cmd->args[0], "history") == 0) {
         printf("This is history being called\n");
         // check for clear and check for offset
-        // bool shouldClear = false;
-        // int offset = 0
+        bool shouldClear = false;
+        int offset = -1;
 
-        // history_get(&history, offset);
+        for (int argIndex = 0; cmd->args[argIndex]; argIndex++) {
+            if (strcmp(cmd->args[argIndex], "-c") == 0) {
+                shouldClear = true;
+            } else if (isInteger(cmd->args[argIndex])) {
+                offset = atoi(cmd->args[argIndex]);
+            } else {
+                printf("bad arguments supplied to history cmd\n");
+                exit(0);
+            }
+        }
+
+        if (shouldClear) {
+            history_clear(&history);
+        } else if (offset != -1) {
+            // execute cmd at offset
+            // char* line = history_get(&history, offset);
+
+            // CMD **cmds = getCmds(&line);
+            // execCmds(cmds);
+        } 
+        history_get(&history, offset);
 
         // history_clear(&history);
-        return;
+        exit(0);
     } else {
         execvp(cmd->args[0], cmd->args);
         exit_err("failed to execvp");
-
-        // to launch an executable
-        // just do execvp the name of whatever they typed
-        // and make sure to make null the last arg of execvp
     }
     return;
 }
 
 void
 execCmds(CMD **cmds) {
+    // I guess I can validate the commands in here???????
+
     CMD* childrenCmds[BUFFERSIZE];
     int numChildren = 0;
     int numPipes = 0;
@@ -252,26 +270,22 @@ execCmds(CMD **cmds) {
                 }
             }
 
-            if (childIndex == 0 && childIndex == numChildren - 1) { // one child case
-                // printf("One child CASE!\n");
+            if (childIndex == 0 && childIndex == numChildren - 1) {
+                // one child case
                 execCmd(childCmd);
             } else if (childIndex == 0) {
-                // printf("This is the first of many children\n");
                 close(pipes[0][READ]); // not reading from pipe to next process
-
                 make_dup2(pipes[0][WRITE], STDOUT_FILENO, "failed to make dup2");
                 close(pipes[0][WRITE]); // close write end bc dup2
 
                 execCmd(childCmd);
             } else if (childIndex == numChildren - 1) {
-                // printf("This is the last of many children\n");
                 close(pipes[childIndex-1][WRITE]); // not writing to pipe from prev process
                 make_dup2(pipes[childIndex-1][READ], STDIN_FILENO, "failed to make dup2");
-                close(pipes[childIndex-1][READ]); // close read end bc dup2
+                close(pipes[childIndex-1][READ]);  // close read end bc dup2
 
                 execCmd(childCmd);
             } else {
-                // printf("This is one of many children\n");
                 close(pipes[childIndex-1][WRITE]); // not writing to pipe from prev process
                 close(pipes[childIndex][READ]);    // not reading from pipe to next process
 
@@ -287,7 +301,6 @@ execCmds(CMD **cmds) {
             return;
         }
     }
-
 
     // close all of the pipes in main process because it doesn't use them
     for (int i = 0; i < numPipes; i++) {
@@ -314,6 +327,19 @@ history_add(HistoryLinkedList *history, char *input) {
     // history of size 1
     // history of 
 
+    // if the size == capacity
+    //   move the head to the next node, delete the old head, 
+
+    // else if the size is 0 make the head and the tail a new node
+    //   
+
+    // else just make a new node attach it to the current tail
+
+    // to do the last part just 
+    // make a new tail
+    // attach the tail to the current tail
+
+
     HistoryListNode* newTail = (HistoryListNode*)malloc(sizeof(HistoryListNode));
     newTail->line = input;
     newTail->next = NULL;
@@ -321,13 +347,30 @@ history_add(HistoryLinkedList *history, char *input) {
     history->tail = newTail;
 
     if (history->size == history->capacity) {
-        
+       // move  
+    } else if (history->size == 0) {
+
+    } else {
+
     } 
 }
 
 void
 history_clear(HistoryLinkedList *history) {
 
+}
+
+char *
+history_get(HistoryLinkedList *history, int offset) {
+    if (offset < history->size || history->size-1 < offset) {
+        // assert that it is in bounds
+    }
+    int index = 0;
+    HistoryListNode *current = history->head;
+    while (index < offset) {
+        current = current->next;
+    }
+    return current->line;
 }
 
 void
@@ -342,10 +385,17 @@ history_init(HistoryLinkedList *history) {
     history->tail = NULL;
     history->size = 0;
     history->capacity = 100;
+    assert(history->capacity > 0);
 }
+
 void
 freeHistory(HistoryLinkedList *history) {
-    // free all of the linked list nodes
+    HistoryListNode *current = history->head;
+    while (current != NULL) {
+        HistoryListNode *next = current->next;
+        free(current);
+        current = next;
+    }
 }
 
 void
@@ -374,4 +424,14 @@ make_dup2(int fd1, int fd2, char* msg) {
     if ((dup2(fd1, fd2)) == -1) {
         exit_err(msg);
     }
+}
+
+bool
+isInteger(char* number) {
+    for (int i = 0; number[i] != '\0'; i++) {
+        if (!isdigit) {
+            return false;
+        }
+    }
+    return true;
 }
