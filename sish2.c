@@ -195,8 +195,9 @@ printCmds(CMD** cmds) {
 void
 execCmd(CMD* cmd) {
     execvp(cmd->args[0], cmd->args);
-    printf(cmd->args[0], cmd->args[1]);
-    exit_err("failed to execvp");
+    char errMsg[BUFFERSIZE];
+    sprintf(errMsg, "failed to execvp on \"%s\"", cmd->args[0]);
+    exit_err(errMsg);
     return;
 }
 
@@ -230,7 +231,7 @@ execCmds(CMD **cmds) {
         } else if (strcmp(childCmd->args[0], "cd") == 0) {
             int dir = chdir(childCmd->args[1]);
             if(dir != 0){
-                printf("Failed to change directory to %s", childCmd -> args[1]);
+                printf("Failed to change directory to %s\n", childCmd -> args[1]);
             }
         } else if (strcmp(childCmd->args[0], "history") == 0) {
             // check for clear and check for offset
