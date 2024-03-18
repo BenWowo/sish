@@ -194,11 +194,9 @@ printCmds(CMD** cmds) {
 
 void
 execCmd(CMD* cmd) {
-
     execvp(cmd->args[0], cmd->args);
     printf(cmd->args[0], cmd->args[1]);
-    exit_err("failed to execvp\t");
-
+    exit_err("failed to execvp");
     return;
 }
 
@@ -252,13 +250,14 @@ execCmds(CMD **cmds) {
             if (shouldClear) {
                 history_clear(&history);
             } else if (offset != -1) {
-                // execute cmd at offset
                 char* line = history_get(&history, offset);
                 history_add(&history, line);
-                CMD **cmds = getCmds(&line);
+
+                char **tokens = getTokens(line);
+
+                CMD **cmds = getCmds(tokens);
                 execCmds(cmds);
-            }
-            else{
+            } else{
                 history_print(&history);
             }
 
