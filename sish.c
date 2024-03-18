@@ -1,192 +1,459 @@
+#include <sys/wait.h>
 #include <stdio.h>
-#include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <sys/wait.h>
-#include <stdbool.h>
+#include <string.h>
+#include <stdint.h>
+#include <assert.h>
+#include <ctype.h>
 
-
-// utilitie
+#define BUFFERSIZE 4096
+#define MAX_NUM_TOKENS 4096
+#define MAX_NUM_CMDS 4096
+#define MAX_NUM_ARGS 4096
+#define PROMPT "sish> "
+#define true 1
+#define false 0
 #define READ 0
 #define WRITE 1
+typedef int8_t bool;
 
-// stuff
+struct HistoryListNode {
+    char line[BUFFERSIZE];
+    struct HistoryListNode *next;
+};
+
+typedef struct HistoryListNode HistoryListNode;
+
+struct HistoryLinkedList{
+    HistoryListNode *head;
+    HistoryListNode *tail;
+    int capacity;
+    int size;
+};
+typedef struct HistoryLinkedList HistoryLinkedList;
+
 struct CMD {
-    char* command;
-    char* flag;
-}; typedef struct CMD CMD;
+    char** args;
+    bool isPipe;
+};
+typedef struct CMD CMD;
 
-void exit_err(char* msg, int code);
-void make_fork(int* cpid, char* msg, int errCode);
-void make_pipe(int** pipe_fd, char* msg, int errCode);
-void make_dup2(int fd1, int fd2, char* msg, int errCode);
+char *getInput();
+char **getTokens(char *input);
+void printTokens(char **tokens);
 
-CMD* build_cmds(char** tokens, int numTokens, int* numCmds);
+CMD  **getCmds(char **tokens);
+void freeCmds(CMD **cmds);
+void printCmds(CMD **cmds);
+void execCmd(CMD *cmd);
+void execCmds(CMD **cmds);
 
+void history_add(HistoryLinkedList *history, char *input);
+void history_clear(HistoryLinkedList *history);
+char *history_get(HistoryLinkedList *history, int offset);
+void history_init(HistoryLinkedList *history);
+void history_print(HistoryLinkedList *history);
+void freeHistory(HistoryLinkedList *history);
 
-int main(int argc, char* argv[]) {
-    const char* prompt = "sish> ";
-    const size_t MAX_INPUT_LENGTH = 1028;
-    char input[MAX_INPUT_LENGTH];
+// utility functions
+void exit_err(char *msg);
+void make_fork(pid_t *cpid, char *msg);
+void make_pipe(int **pipe_fd, char *msg);
+void make_dup2(int fd1, int fd2, char *msg);
+bool isInteger(char* number);
+bool didEarlyExit = false;
 
-    const size_t MAX_TOKEN_LENGTH = 1028;
-    const size_t MAX_NUM_TOKENS = 1028;
-    while(1) {
-        // Read Eval Print Loop
+HistoryLinkedList history = {0}; // this is bad practice...
 
-        // Read
+int
+main(int argc, char* argv[]) {
+    history_init(&history);
+
+    while(true) {
+        const char* prompt = PROMPT;
         printf("%s", prompt);
-        fgets(input, MAX_INPUT_LENGTH, stdin);
-        input[strlen(input) - 1] = '\0';
-        // scanf("%s", input);
 
-        // Eval
-        int numTokens = 0;
-        char *tokens[MAX_NUM_TOKENS];
-        char *token, *position;
-        char *delimiters = " ";
+        char* input = getInput();
+        //printf("input: %s\n", input);
 
-        token = strtok_r(input, delimiters, &position);
-        tokens[numTokens] = token;
-        numTokens++;
-        while((token = strtok_r(NULL, delimiters, &position)) != NULL) {
-            tokens[numTokens] = token;
-            numTokens++;
-            // have to distinguish between tokens that will be different processes vs flags of process
+        history_add(&history, input);
+
+        char** tokens = getTokens(input);
+        // printTokens(tokens);
+
+        CMD** cmds = getCmds(tokens);
+        // printCmds(cmds);
+
+        // I guess I can do error validation inside of execCmds
+        execCmds(cmds);
+
+        freeCmds(cmds);
+        free(tokens);
+        free(input);
+
+        if(didEarlyExit){
+            break;
         }
-        // add EOF token to allow for token peaking without going out of bounds
-        tokens[numTokens] = "\n";
+    }
+    freeHistory(&history);
 
-        printf("numTokens: %d\n", numTokens);
-        for (int i = 0; i < numTokens; i++){
-            printf("Token: %s\n", tokens[i]);
-        }
+    printf("Thank you for using sish!\n");
 
-        int numCmds;
-        CMD* cmds = build_cmds(tokens, numTokens, &numCmds); // TODO: Create build_cmds which will turn the list of tokens into a list of CMDs from the | symbol
+    return EXIT_SUCCESS;
+}
 
-        // token types
-        // bin, flag, ident?
+char *
+getInput() {
+    size_t bufferSize = BUFFERSIZE;
+    char *line = (char*)malloc(sizeof(char) * bufferSize);
+    ssize_t bytesRead;
+    if ((bytesRead = getline(&line, &bufferSize, stdin)) == -1) {
+        printf("This is a non fatal error!\n");
+    }
+    line[bytesRead - 1] = '\0';
+    return line;
+}
 
-        // can have a cmd struct
-        // which will store the cmd and the flags
-        // then can convert tokens into list of cmds
-        // with this we then know how many forks we will do
-        // or could decide to do the forks on the fly
+char **
+getTokens(char* input) {
+    int tokenIndex = 0;
+    char** tokens = (char**)malloc(sizeof(char*) * MAX_NUM_TOKENS);
+    char *token, *position;
+    char *delimiters = " ";
 
-        // also need to close stdout when printing output of a file
-        // also if piping then you need to create the pipe before creating the child process
-        // execvp - number of args it numTokens + 1
+    token = strtok_r(input, delimiters, &position);
+    tokens[tokenIndex] = token;
+    tokenIndex++;
+    while((token = strtok_r(NULL, delimiters, &position)) != NULL) {
+        tokens[tokenIndex] = token;
+        tokenIndex++;
+    }
 
-        // ### This is proof of concept for the piping ###
-        // All of the command outputs will be written to a buffer
-        // for each command a child process is spawned that will
-        // 1. Create a pipe
-        // 2. Write the contents of the buffer to the pipe
-        // 3. Spawn a grandchild that
-        //    3.1. reads from the pipe
-        //    3.2. executes cmd with inputs from pipe
-        //    3.3. writes its output to the pipe
-        // 4. The child then reads the contents of the pipe and writes them to the buffer
-        //    so that the outputs can be used in piped commands or printed from the main process
+    tokens[tokenIndex] = NULL;
+    return tokens;
+}
 
-        const int BUFFERSIZE = 2048;
-        char buffer[BUFFERSIZE];
+void
+printTokens(char **tokens) {
+    for (int tokenIndex = 0; tokens[tokenIndex] != NULL; tokenIndex++) {
+        printf("token: %s\n", tokens[tokenIndex]);
+    }
+}
 
-        printf("\n");
-        for (int i = 0; i < numCmds; i++) {
-            if(strcmp(cmds[i].command, "exit") == 0)
-                exit(EXIT_SUCCESS);
-            printf("%s %s\n", cmds[i].command, cmds[i].flag);
-            pid_t cpid1;
-            make_fork(&cpid1, "failed to fork for cpid1", 1);
-            if (cpid1 == 0) {
-                int* fd;
-                make_pipe(&fd ,"failed to create pipe", 1);
+CMD **
+getCmds(char **tokens) {
+    CMD** cmds = (CMD**)malloc(sizeof(CMD*) * MAX_NUM_CMDS);
+    int tokenIndex = 0;
+    int cmdIndex = 0;
+    while (tokens[tokenIndex] != NULL) {
+        CMD* cmd = (CMD*)malloc(sizeof(CMD));
+        cmd->args = (char**)malloc(sizeof(char*) * MAX_NUM_ARGS);
+        int argIndex = 0;
 
-                // write buffer contents to pipe
-                size_t contentSize = strlen(buffer) + 1;
-                if (write(fd[WRITE], buffer, contentSize) != contentSize) {
-                    perror("failed to write buffer content to pipe");
-                    return 1;
-                }
-
-                pid_t cpid2;
-                make_fork(&cpid2, "failed to fork for cpid2", 1);
-                if (cpid2 == 0) {
-                    close(fd[READ]);
-                    make_dup2(fd[WRITE], STDIN_FILENO, "dup2 failed in class child process", 1);
-                    close(fd[WRITE]);
-                    //TODO, construct commands based on current cmds[i]
-                    char* myargs[] = {cmds[i].command, cmds[i].flag, NULL};
-                    //TODO, implement the command and run using execvp
-                    execvp(myargs[0], myargs);
-                }
-                close(fd[WRITE]);
-                waitpid(cpid2, NULL, 0);
-
-                // write the output of the pipe to the buffer
-                int nbytes = read(fd[READ], buffer, sizeof(buffer));
-                close(fd[READ]);
-                free(fd);
+        if (strcmp(tokens[tokenIndex], "|") == 0) {
+            cmd->args[argIndex] = tokens[tokenIndex];
+            cmd->isPipe = true;
+            argIndex++;
+            tokenIndex++;
+        } else {
+            cmd->isPipe = false;
+            while (tokens[tokenIndex] != NULL && strcmp(tokens[tokenIndex], "|") != 0) {
+                cmd->args[argIndex] = tokens[tokenIndex];
+                argIndex++;
+                tokenIndex++;
             }
         }
-        // print the contents of the buffer to stdout
-        printf("This should be the buffer content\n");
-        printf("%s\n", buffer);
+
+        cmd->args[argIndex] = NULL;
+        cmds[cmdIndex] = cmd;
+        cmdIndex++;
     }
-    printf("Thank you for using sish!\n");
+    cmds[cmdIndex] = NULL;
+    return cmds;
 }
 
-void exit_err(char* msg, int code) {
+void
+freeCmds(CMD** cmds) {
+    for (int cmdIndex = 0; cmds[cmdIndex] != NULL; cmdIndex++) {
+        free(cmds[cmdIndex]->args);
+    }
+    free(cmds);
+}
+
+void
+printCmds(CMD** cmds) {
+    for (int cmdIndex = 0; cmds[cmdIndex] != NULL; cmdIndex++) {
+        printf("cmd: ");
+        for (int argIndex = 0; cmds[cmdIndex]->args[argIndex] != NULL; argIndex++) {
+            printf("%s ", cmds[cmdIndex]->args[argIndex]);
+        }
+        printf("\n");
+    }
+}
+
+void
+execCmd(CMD* cmd) {
+    execvp(cmd->args[0], cmd->args);
+    char errMsg[BUFFERSIZE];
+    sprintf(errMsg, "failed to execvp on \"%s\"", cmd->args[0]);
+    exit_err(errMsg);
+    return;
+}
+
+void
+execCmds(CMD **cmds) {
+    // I guess I can validate the commands in here???????
+
+    CMD* childrenCmds[BUFFERSIZE];
+    int numChildren = 0;
+    int numPipes = 0;
+    for (int cmdIndex = 0; cmds[cmdIndex] != NULL; cmdIndex++) {
+        if (cmds[cmdIndex]->isPipe == true) {
+            numPipes++;
+        } else {
+            childrenCmds[numChildren] = cmds[cmdIndex];
+            numChildren++;
+        }
+    }
+    int **pipes = (int**)malloc(sizeof(int*) * numPipes);
+    pid_t *cpids = (pid_t*)malloc(sizeof(pid_t) * numChildren);
+
+    for (int pipeIndex = 0; pipeIndex < numPipes; pipeIndex++) {
+       make_pipe(&pipes[pipeIndex], "failed to make pipe");
+    }
+
+    for (int childIndex = 0; childIndex < numChildren; childIndex++) {
+        CMD* childCmd = childrenCmds[childIndex];
+        if (strcmp(childCmd->args[0], "exit") == 0) {
+            didEarlyExit = true;
+            return;
+        } else if (strcmp(childCmd->args[0], "cd") == 0) {
+            int dir = chdir(childCmd->args[1]);
+            if(dir != 0){
+                printf("Failed to change directory to %s\n", childCmd -> args[1]);
+            }
+        } else if (strcmp(childCmd->args[0], "history") == 0) {
+            // check for clear and check for offset
+            bool shouldClear = false;
+            int offset = -1;
+            for (int argIndex = 1; childCmd->args[argIndex] != NULL; argIndex++) {
+                if (strcmp(childCmd->args[argIndex], "-c") == 0) {
+                    shouldClear = true;
+                } else if (isInteger(childCmd->args[argIndex])) {
+                    offset = atoi(childCmd->args[argIndex]);
+                } else {
+                    printf("bad arguments supplied to history cmd\n");
+                    //exit(0);
+                }
+            }
+
+            if (shouldClear) {
+                history_clear(&history);
+            } else if (offset != -1) {
+                char* line = history_get(&history, offset);
+                history_add(&history, line);
+
+                char **tokens = getTokens(line);
+
+                CMD **cmds = getCmds(tokens);
+                execCmds(cmds);
+            } else{
+                history_print(&history);
+            }
+
+        } else {
+            make_fork(&cpids[childIndex], "failed to make fork");
+            if (cpids[childIndex] == 0) {
+                // close all pipes that it is not using
+                // cpid 0 | reads from stdin, writes to fd[0]
+                // cpid 1 | reads from fd[0], writes to fd[1]
+                // ...
+                // cpid n | reads from fd[n-1], writes to stdout
+                for (int pipeIndex = 0; pipeIndex < numPipes; pipeIndex++) {
+                    if (pipeIndex != childIndex-1 && pipeIndex != childIndex) {
+                        for (int pipeEnd = 0; pipeEnd < 2; pipeEnd++) {
+                            close(pipes[pipeIndex][pipeEnd]);
+                        }
+                    }
+                }
+
+                if (childIndex == 0 && childIndex == numChildren - 1) {
+                    // one child case
+                    execCmd(childCmd);
+                } else if (childIndex == 0) {
+                    close(pipes[0][READ]); // not reading from pipe to next process
+                    make_dup2(pipes[0][WRITE], STDOUT_FILENO, "failed to make dup2");
+                    close(pipes[0][WRITE]); // close write end bc dup2
+
+                    execCmd(childCmd);
+                } else if (childIndex == numChildren - 1) {
+                    close(pipes[childIndex-1][WRITE]); // not writing to pipe from prev process
+                    make_dup2(pipes[childIndex-1][READ], STDIN_FILENO, "failed to make dup2");
+                    close(pipes[childIndex-1][READ]);  // close read end bc dup2
+
+                    execCmd(childCmd);
+                } else {
+                    close(pipes[childIndex-1][WRITE]); // not writing to pipe from prev process
+                    close(pipes[childIndex][READ]);    // not reading from pipe to next process
+
+                    make_dup2(pipes[childIndex-1][READ], STDIN_FILENO, "failed to make dup2");
+                    make_dup2(pipes[childIndex][WRITE], STDOUT_FILENO, "failed to make dup2");
+
+                    close(pipes[childIndex-1][READ]); // close read end bc dup2
+                    close(pipes[childIndex][WRITE]);  // close write end bc dup2
+
+                    execCmd(childCmd);
+                }
+                printf("This part only happens if they use exit, cd, or history\n");
+                return;
+            }
+        }
+    }
+
+    // close all of the pipes in main process because it doesn't use them
+    for (int i = 0; i < numPipes; i++) {
+        for (int pipeEnd = 0; pipeEnd < 2; pipeEnd++) {
+            close(pipes[i][pipeEnd]);
+        }
+    }
+
+    // wait for all of the children processes to finish
+    for (int i = 0; i < numChildren; i++) {
+        waitpid(cpids[i], NULL, 0);
+    }
+
+    free(cpids);
+    for (int i = 0; i < numPipes; i++) {
+        free(pipes[i]);
+    }
+    free(pipes);
+}
+
+void
+history_add(HistoryLinkedList *history, char *input) {
+    // edge case for empty history
+    // history of size 1
+    // history of
+
+    // if the size == capacity
+    //   move the head to the next node, delete the old head,
+
+    // else if the size is 0 make the head and the tail a new node
+    //
+
+    // else just make a new node attach it to the current tail
+
+    // to do the last part just
+    // make a new tail
+    // attach the tail to the current tail
+
+
+    HistoryListNode* newTail = (HistoryListNode*)malloc(sizeof(HistoryListNode));
+    strcpy(newTail->line, input);
+    newTail->next = NULL;
+    if (history->size == history->capacity) {
+        HistoryListNode* oldHead = history->head;
+        history->head = history->head->next;
+        free(oldHead);
+        history->tail->next = newTail;
+        history->tail = newTail;
+    } else if (history->size == 0) {
+        history->head = newTail;
+        history->tail = newTail;
+        history->size++;
+    } else {
+        history->tail->next = newTail;
+        history->tail = newTail;
+        history->size++;
+    }
+}
+
+void
+history_clear(HistoryLinkedList *history) {
+    freeHistory(history);
+    history_init(history);
+}
+
+char *
+history_get(HistoryLinkedList *history, int offset) {
+    if (offset < 0 || offset >= history->size) {
+        return "";
+    }
+    int index = 0;
+    HistoryListNode *current = history->head;
+    while (index < offset) {
+        current = current->next;
+        index++;
+    }
+    return current->line;
+}
+
+void
+history_print(HistoryLinkedList *history) {
+    HistoryListNode *current = history->head;
+    int offset = 0;
+    while (current != NULL) {
+        HistoryListNode *next = current->next;
+        printf("%d:\t %s\n", offset, current->line);
+        current = next;
+        offset++;
+    }
+}
+
+void
+history_init(HistoryLinkedList *history) {
+    history->head = NULL;
+    history->tail = NULL;
+    history->size = 0;
+    history->capacity = 100;
+    assert(history->capacity > 0);
+}
+
+void
+freeHistory(HistoryLinkedList *history) {
+    HistoryListNode *current = history->head;
+    while (current != NULL) {
+        HistoryListNode *next = current->next;
+        free(current);
+        current = next;
+    }
+}
+
+void
+exit_err(char* msg) {
     perror(msg);
-    exit(code);
+    exit(EXIT_FAILURE);
 }
 
-void make_fork(int* cpid, char* msg, int code) {
+void
+make_fork(pid_t* cpid, char* msg) {
     if ((*cpid = fork()) < 0) {
-        exit_err(msg, code);
+        exit_err(msg);
     }
 }
 
-void make_pipe(int** pipe_fd, char* msg, int code) {
+void
+make_pipe(int** pipe_fd, char* msg) {
     *pipe_fd = (int*)malloc(2 * sizeof(int));
     if (pipe(*pipe_fd) == - 1) {
-        exit_err(msg, code);
+        exit_err(msg);
     }
 }
 
-void make_dup2(int fd1, int fd2, char* msg, int code) {
+void
+make_dup2(int fd1, int fd2, char* msg) {
     if ((dup2(fd1, fd2)) == -1) {
-        exit_err(msg, code);
+        exit_err(msg);
     }
 }
 
-CMD* build_cmds(char** tokens, int numTokens, int* numCmds){
-    CMD* cmds = (CMD*) malloc(sizeof(CMD)*numTokens);
-
-    bool canStartNextCmd = true;
-    *numCmds = 0;
-
-    for(int i = 0; i < numTokens; i++){
-        int endOfCommand = strcmp(tokens[i], "|") == 0;
-        if(endOfCommand){
-            //End the current command and start editing the next one
-            canStartNextCmd = true;
-            (*numCmds)++;
-            continue;
-        }
-        else if(canStartNextCmd){
-            //Start building a new command
-            cmds[*numCmds].command = tokens[i];
-            canStartNextCmd = false;
-            continue;
-        }else{
-            //Build the flags
-            cmds[*numCmds].flag = tokens[i];
-            continue;
+bool
+isInteger(char* number) {
+    for (int i = 0; number[i] != '\0'; i++) {
+        if (!isdigit(number[i])) {
+            return false;
         }
     }
-    (*numCmds)++;
-    return cmds;
+    return true;
 }
