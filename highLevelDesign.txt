@@ -1,0 +1,53 @@
+struct HistoryLinkedList{
+    head;
+    tail;
+    size;
+    capacity;
+}
+
+historyAdd(&history, input) {
+    // add the input line to the history
+}
+
+historyClear(&history) {
+    // clear the history
+}
+
+
+// the main function should have the loop that processes all of the commands
+main {
+    while (true) {
+        input = getInput;
+        historyAdd(input)
+        commands = getCommandsFromInput(input)
+        execComamnds(commands);
+    }
+    return;
+}
+
+getInput() {
+    // get the input from the user
+}
+
+getCommandsFromInput(input) {
+    // return the list of commands from the input
+}
+
+execComamnds() {
+    // execute the supplied commands
+
+    When executing the commands I will allocate space
+    for the pipes that I need and the children processes
+    then after allocating them I will orchestrate the great
+    magic of them working together
+    
+    This is a table describing the workflow
+    
+    read            ; process ; write
+
+    stdin           ; cpid0   ; pipe[0][write]
+    pipe[0][read]   ; cpid1   ; pipe[1][write]
+    pipe[1][read]   ; cpid2   ; pipe[2][write]
+    ...
+    pipe[n-1][read] ; cpidn   ; stdout
+}
