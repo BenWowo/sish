@@ -81,14 +81,15 @@ int main(int argc, char* argv[]) {
 
         char* input = getInput(); // Get input and add it to history
 
-        history_add(&history, input); // Get input and add the line to history
-
         char** tokens = getTokens(input); // Parse the input as a series of tokens by the " " delimeter
+
 
         CMD** cmds = getCmds(tokens); // Construct commands based on delimited tokens
 
         execCmds(cmds); // Execute CMDS
 
+        //history_print(&history);
+        history_add(&history, input); // Get input and add the line to history
 
         freeCmds(cmds); // Free already used data
         free(tokens);
@@ -116,8 +117,10 @@ char* getInput() { // Code to read from a line
     return line;
 }
 
-char** getTokens(char* input) { // Use strtok to grab tokens one by one from the input line
+char** getTokens(char* inp) { // Use strtok to grab tokens one by one from the input line
     int tokenIndex = 0;
+    char* input = (char*) malloc(sizeof(char)*BUFFERSIZE);
+    strcpy(input, inp);
     char** tokens = (char**)malloc(sizeof(char*) * MAX_NUM_TOKENS);
     char *token, *position;
     char *delimiters = " ";
@@ -250,7 +253,7 @@ void execCmds(CMD **cmds) {// Execute a list of cmds
             } else if (offset != -1) {
                 //Reexecute old command
                 char* line = history_get(&history, offset);
-                history_add(&history, line);
+                // history_add(&history, line);
 
                 char **tokens = getTokens(line);
 
